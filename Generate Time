@@ -1,0 +1,1559 @@
+USE [ForecastFast_Epoch]
+GO
+/****** Object:  StoredProcedure [MDM].[POPULATE_TIME]    Script Date: 22/01/2022 19:09:59 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+-- =============================================
+-- Author:		<Author,,Name>
+-- Create date: <Create Date,,>
+-- Description:	<Description,,>
+-- =============================================
+CREATE PROCEDURE [MDM].[POPULATE_TIME]
+	-- Add the parameters for the stored procedure here
+	@FIRST_CALENDAR_DAY DATETIME,-- = '20180202',
+	@CALENDAR_TYPE      VARCHAR(3),-- = '454',
+	--@FIRST_DAY_OF_WEEK  INT,-- = 7,
+	@TODAY              DATETIME,-- = NULL,
+	@FUTURE_YEARS      INT--,-- = 2
+	--@LEAF VARCHAR(1)
+AS
+BEGIN
+--	-- SET NOCOUNT ON added to prevent extra result sets from
+--	-- interfering with SELECT statements.
+--	SET NOCOUNT ON;
+
+----	--DEFINITIONS
+
+----	--FIRST_CALENDAR_DAY:
+----	--The day starting from the calendar is generated. 
+----	--This date is used to identify the fist day of the week that contains this date;
+----	--Date must be provided in the format YYYYMMDD.
+----	--By default is considered the date 20180204
+
+                        
+----	--CALENDAR_TYPE:   
+----	--Kind of Retail Caledar. 
+----	--Possible values are:
+----	--	- 445
+----	--	- 454
+----	--	- 544
+----	--By default is used 445
+
+                        
+----	--FIRST_DAY_OF_WEEK:
+----	--First day of the week.
+----	--Possible values are:
+----	--	- 1 ( that means SUN )
+----	--	- 2 ( that means MON )
+----	--	- 3 ( that means TUE )
+----	--	- 4 ( that means WED )
+----	--	- 5 ( that means THU )
+----	--	- 6 ( that means FRI )
+----	--	- 7 ( that means SAT )
+----	--By default is used 7
+
+                        
+----	--TODAY:       
+----	--It''s possible to override the currend day.
+----	--Date must be provided in the format YYYYMMDD.
+----	--By default is considered the current date
+
+                                                
+----	--FUTURE_WEEKS:
+----	--Identify the number of weeks in the future, 
+----	--starting from the parameter TODAY (or the current date),
+----	--that the procedure consider to generate the time in the future.
+----	--By default is considered the current date
+
+----AS
+----BEGIN
+----	-- SET NOCOUNT ON added to prevent extra result sets from
+----	-- interfering with SELECT statements.
+----	SET NOCOUNT ON;
+
+	--DECLARE @FIRST_CALENDAR_DAY DATETIME-- = '20140105',
+	--DECLARE @CALENDAR_TYPE      VARCHAR(3)-- = '454',
+	DECLARE @FIRST_DAY_OF_WEEK  INT-- = 7,
+	--DECLARE @TODAY              DATETIME-- = NULL,
+	--DECLARE @FUTURE_YEARS		INT
+	--DECLARE @LEAF				VARCHAR(1)
+
+	--DECLARATIONS
+	DECLARE @FUTURE_WEEKS			AS INT
+	DECLARE @Delta                  AS INT
+	DECLARE @Today_Week_Begin       AS DATETIME
+	DECLARE @FirstCalendarDay_Begin AS DATETIME
+	DECLARE @Extension               AS DATETIME
+	DECLARE @Extension_Week_Begin       AS DATETIME
+
+	DECLARE @AppDb_Name				AS VARCHAR(256)
+	DECLARE @AppDb_Server			AS VARCHAR(256)
+	DECLARE @AppDbPath				AS VARCHAR(512)
+	DECLARE @AppDbMaxDate_out		AS DATETIME
+
+	DECLARE @MAX_FutureDate         AS DATETIME
+	DECLARE @AppDbMaxDate           AS DATETIME
+	DECLARE @NumDayToBeCreated      AS INT
+    
+	DECLARE @ProgDay                AS INT
+	DECLARE @Day                    AS VARCHAR(40)
+	DECLARE @DayDate                AS DATETIME
+	DECLARE @CounterDay             AS INT
+	DECLARE @PartialWeek            AS VARCHAR(40)
+	DECLARE @CounterPartialWeek     AS INT
+	DECLARE @RetailWeekProg         AS INT
+	DECLARE @RetailWeek             AS VARCHAR(40)
+	DECLARE @CounterRetailWeek      AS INT
+	DECLARE @CounterRetailWeekMonth AS INT
+	DECLARE @RetailMonth            AS VARCHAR(40)
+	DECLARE @CounterRetailMonth     AS INT
+	DECLARE @RetailQuarter          AS VARCHAR(40)
+	DECLARE @CounterRetailQuarter   AS INT
+	DECLARE @RetailHalf             AS VARCHAR(40)
+	DECLARE @CounterRetailHalf      AS INT
+	DECLARE @Year                   AS VARCHAR(40)
+	DECLARE @CounterYear            AS INT
+	DECLARE @RetailWeekType         AS VARCHAR(40)
+	DECLARE @CounterRetailWeekType  AS INT
+
+
+	DECLARE @GregorianWeek          AS VARCHAR(40)
+	DECLARE @CounterGregorianWeek   AS INT
+	DECLARE @GregorianMonth         AS VARCHAR(40)
+	DECLARE @CounterGregorianMonth  AS INT
+	DECLARE @GregorianQuarter       AS VARCHAR(40)
+	DECLARE @CounterGregorianQuarter AS INT
+	DECLARE @GregorianHalf          AS VARCHAR(40)
+	DECLARE @CounterGregorianHalf   AS INT
+	DECLARE @GregorianYear          AS VARCHAR(40)
+	DECLARE @CounterGregorianYear   AS INT
+
+
+	DECLARE @Y                      AS VARCHAR(4)
+	DECLARE @M                      AS VARCHAR(2)
+	DECLARE @D                      AS DATETIME
+    
+	DECLARE @USER_IDEN              AS VARCHAR(40)
+	DECLARE @MONTH_PROG_ZERO		AS INT
+	DECLARE @QUARTER_PROG_ZERO		AS INT
+	DECLARE @HALF_PROG_ZERO			AS INT
+	DECLARE @YEAR_PROG_ZERO			AS INT
+	DECLARE @iROWCOUNT				AS INT
+
+	-- Standard variables   
+	DECLARE @nSQL                   AS NVARCHAR(MAX)
+	DECLARE @nPARAMS                AS NVARCHAR(MAX)
+	DECLARE @STATUS                 AS CHAR(1)
+	DECLARE @TSK_IDEN               AS NVARCHAR(128)
+	DECLARE @TSK_LAUNCH             AS NVARCHAR(MAX)
+	DECLARE @EXL_PROG               AS INT
+	DECLARE @EXD_MSG                AS VARCHAR(MAX)
+	DECLARE @ERR_LN                 AS INT
+	DECLARE @ERR_MSG                AS VARCHAR(MAX)
+	DECLARE @ERR_NO                 AS INT
+	DECLARE @ERR_SP                 AS NVARCHAR(128)
+	DECLARE @STEP_DESC              AS VARCHAR(1000)
+	DECLARE @STEP_START             AS DATETIME
+
+IF NOT EXISTS (SELECT MAX(BUCKET_END) FROM DWH.D_TIME_PERIOD)
+BEGIN
+	--if exists (select max(bucket_end) from DWH.D_TIME_PERIOD)
+	--		begin
+	--			select @FIRST_CALENDAR_DAY = dateadd(day,1,max(bucket_end)) from DWH.D_TIME_PERIOD
+	--		end
+	--	else
+	--		begin
+	if @FIRST_CALENDAR_DAY IS NULL 
+		set @FIRST_CALENDAR_DAY = convert(datetime,'20180204',112)
+	else
+		if isdate(@FIRST_CALENDAR_DAY) = 0  
+		print 'Invalid value for parameter @FIRST_CALENDAR_DAY.'
+		--return;
+	--end
+
+	if @CALENDAR_TYPE is null 
+		set @CALENDAR_TYPE = '445'
+	else
+		if @CALENDAR_TYPE not in ('454','445','544')
+		print 'Invalid value for parameter @CALENDAR_TYPE.'
+		--return;
+
+	select @FIRST_DAY_OF_WEEK = DATEPART(dw,@FIRST_CALENDAR_DAY)
+	--if @FIRST_DAY_OF_WEEK is null
+	--	set @FIRST_DAY_OF_WEEK = 1
+	--else
+	--	if @FIRST_DAY_OF_WEEK > 7 or @FIRST_DAY_OF_WEEK < 1 
+	--	print 'Invalid value for parameter @FIRST_DAY_OF_WEEK.'
+	--	--return;
+
+	if @Today is null 
+		SET @Today = getdate()
+	else
+		if isdate(@Today) = 0 
+		print 'Invalid value for parameter @TODAY.'
+
+	if @FUTURE_YEARS is null 
+		SET @FUTURE_YEARS = 2
+	else
+		if isdate(@Today) = 0 
+		print 'Invalid value for parameter @FUTURE_YEARS.'
+		--return;
+
+	--if @LEAF is null 
+	--	SET @LEAF = 'P'
+	--else
+	--	if @LEAF not in ('W','P')
+	--	print 'Invalid value for parameter @LEAF.'
+	--	--return;
+
+	--SET @FIRST_CALENDAR_DAY = ISNULL(@FIRST_CALENDAR_DAY,'20180202')
+	--SET @CALENDAR_TYPE = ISNULL(@CALENDAR_TYPE,'454')
+	--SET @FIRST_DAY_OF_WEEK = ISNULL(@FIRST_DAY_OF_WEEK,7)
+	--SET @TODAY = NULL
+	--SET @FUTURE_YEARS = ISNULL (@FUTURE_YEARS,2)
+	--SET @LEAF = ISNULL(@LEAF,'M')
+
+	SET @FUTURE_WEEKS = @FUTURE_YEARS*52
+
+	--TABLE
+	IF OBJECT_ID(N'GenerateTime') IS NOT NULL
+	BEGIN
+	DROP TABLE GenerateTime
+	END
+	
+	CREATE TABLE GenerateTime
+						(
+							[DAY]                   [varchar](40)   NOT NULL,
+							[DAY_SEQ]               [int]           NOT NULL,
+							[DAY_PROG]              [int]           NOT NULL,
+							[DAY_DATE]              [datetime]      NOT NULL,
+							[PARTIAL_WEEK]          [varchar](40)   NOT NULL,
+							[PARTIAL_WEEK_SEQ]      [int]           NOT NULL,
+							[RETAIL_WEEK]           [varchar](40)   NOT NULL,
+							[RETAIL_WEEK_SEQ]       [int]           NOT NULL,   
+							[RETAIL_WEEK_PROG]      [int]           NOT NULL,   
+							[RETAIL_WEEK_PERIOD]    [int]           NOT NULL,   
+							[RETAIL_WEEK_TYPE]      [varchar](40)   NOT NULL,
+							[RETAIL_MONTH]          [varchar](40)   NOT NULL,
+							[RETAIL_MONTH_SEQ]      [int]           NOT NULL,
+							[RETAIL_MONTH_PROG]     [int]           NOT NULL,
+							[RETAIL_MONTH_PERIOD]   [int]           NOT NULL,   
+							[RETAIL_QUARTER]        [varchar](40)   NOT NULL,
+							[RETAIL_QUARTER_SEQ]    [int]           NOT NULL,
+							[RETAIL_QUARTER_PROG]   [int]           NOT NULL,
+							[RETAIL_HALF]           [varchar](40)   NOT NULL,
+							[RETAIL_HALF_SEQ]       [int]           NOT NULL,
+							[RETAIL_HALF_PROG]      [int]           NOT NULL,
+							[RETAIL_YEAR]           [varchar](40)   NOT NULL,
+							[RETAIL_YEAR_SEQ]       [int]           NOT NULL,
+							[RETAIL_YEAR_PROG]      [int]           NOT NULL,
+							[GREGORIAN_WEEK]        [varchar](40)   NOT NULL,
+							[GREGORIAN_WEEK_SEQ]    [int]           NOT NULL,       
+							[GREGORIAN_MONTH]       [varchar](40)   NOT NULL,
+							[GREGORIAN_MONTH_SEQ]   [int]           NOT NULL,
+							[GREGORIAN_QUARTER]     [varchar](40)   NOT NULL,
+							[GREGORIAN_QUARTER_SEQ] [int]           NOT NULL,
+							[GREGORIAN_HALF]        [varchar](40)   NOT NULL,
+							[GREGORIAN_HALF_SEQ]    [int]           NOT NULL,
+							[GREGORIAN_YEAR]        [varchar](40)   NOT NULL,
+							[GREGORIAN_YEAR_SEQ]    [int]           NOT NULL
+						)
+
+		--PARAMS
+
+		SET @Delta =DATEPART(DW,@Today)
+		SET @Today_Week_Begin = DATEADD(DAY,1-@Delta,@Today) 
+
+		SET @Delta =DATEPART(DW,@First_Calendar_Day)        
+		--SET @FirstCalendarDay_Begin = @FIRST_CALENDAR_DAY
+		SET @FirstCalendarDay_Begin = DATEADD(DAY,@FIRST_DAY_OF_WEEK-@Delta,@First_Calendar_Day)
+		SET @MAX_FutureDate = DATEADD(WEEK,@Future_Weeks,@Today_Week_Begin)+6
+
+		
+		
+		if ( @AppDbMaxDate > @MAX_FutureDate ) set @MAX_FutureDate = dateadd(day,1,@AppDbMaxDate)
+
+		SET @NumDayToBeCreated = datediff(day,@FirstCalendarDay_Begin,@MAX_FutureDate)
+        
+		SET @ProgDay = 0
+		SET @CounterDay = 1
+		SET @RetailWeekProg = 1
+		SET @CounterRetailWeek = 1
+		SET @CounterRetailWeekMonth = 1
+		SET @CounterRetailMonth = 1
+		SET @RetailMonth = 1
+		SET @CounterRetailQuarter = 1
+		SET @RetailQuarter = 1
+		SET @CounterRetailHalf = 1
+		SET @RetailHalf = 1
+		SET @CounterRetailWeekType = 1
+		SET @RetailWeekType = SUBSTRING(@Calendar_Type,@CounterRetailWeekType,1)
+		SET @CounterYear = 1
+		SET @Year = DATEPART(YEAR,@First_Calendar_Day)
+		SET @CounterGregorianYear = 1
+
+		WHILE @ProgDay < @NumDayToBeCreated
+		BEGIN
+			SET @DayDate = DATEADD(DAY,@ProgDay,@FirstCalendarDay_Begin)
+			SET @Day = CONVERT(VARCHAR,@DayDate,112)
+			SET @RetailWeek = REPLICATE('0',2-LEN(CAST(@CounterRetailWeek AS VARCHAR))) + CAST(@CounterRetailWeek AS VARCHAR)       
+            
+			if isnull(@GregorianWeek,0) <> datepart(WW,@DayDate)    
+			begin           
+				SET @CounterPartialWeek = 1     
+			end 
+            
+			if isnull(@GregorianWeek,0) = datepart(WW,@DayDate) and isnull(@GregorianMonth,0) <> datepart(MM,@DayDate)
+			begin
+				SET @CounterPartialWeek = 2     
+			end 
+            
+			SET @PartialWeek = REPLICATE('0',2-LEN(@CounterPartialWeek)) + CAST(@CounterPartialWeek AS VARCHAR)     
+            
+			SET @CounterGregorianWeek = datepart(WK,@DayDate)   
+			SET @GregorianWeek = REPLICATE('0',2-LEN(CAST(datepart(WK,@DayDate) AS VARCHAR))) + CAST(datepart(WK,@DayDate) AS VARCHAR)  
+			SET @CounterGregorianMonth = datepart(MM,@DayDate)      
+			SET @GregorianMonth = REPLICATE('0',2-LEN(CAST(datepart(MM,@DayDate) AS VARCHAR))) + CAST(datepart(MM,@DayDate) AS VARCHAR)
+            
+			SET @CounterGregorianQuarter = CASE 
+												when datepart(MM,@DayDate) IN (1,2,3) then 1
+												when datepart(MM,@DayDate) IN (4,5,6) then 2
+												when datepart(MM,@DayDate) IN (7,8,9) then 3
+												when datepart(MM,@DayDate) IN (10,11,12) then 4
+											END      
+			SET @GregorianQuarter = REPLICATE('0',2-LEN(@CounterGregorianQuarter)) + CAST(@CounterGregorianQuarter AS VARCHAR)      
+            
+			SET @CounterGregorianHalf = CASE    
+											when datepart(MM,@DayDate) IN (1,2,3,4,5,6) then 1
+											when datepart(MM,@DayDate) IN (6,7,8,9,10,11,12) then 2         
+										END
+			SET @GregorianHalf = REPLICATE('0',2-LEN(@CounterGregorianHalf)) + CAST(@CounterGregorianHalf AS VARCHAR)       
+                    
+			if @GregorianYear <> datepart(YYYY,@DayDate)            
+				SET @CounterGregorianYear = @CounterGregorianYear + 1
+			SET @GregorianYear = datepart(YYYY,@DayDate)        
+
+
+		set @nSQL = '
+					INSERT INTO 
+						[dbo].[GenerateTime] 
+					(
+						[DAY],
+						[DAY_SEQ],
+						[DAY_PROG],    
+						[DAY_DATE],
+						[PARTIAL_WEEK],
+						[PARTIAL_WEEK_SEQ],
+						[RETAIL_WEEK],
+						[RETAIL_WEEK_SEQ],
+						[RETAIL_WEEK_PROG],
+						[RETAIL_WEEK_PERIOD],      
+						[RETAIL_WEEK_TYPE],
+						[RETAIL_MONTH],
+						[RETAIL_MONTH_SEQ],
+						[RETAIL_MONTH_PROG],    
+						[RETAIL_MONTH_PERIOD],  
+						[RETAIL_QUARTER],
+						[RETAIL_QUARTER_SEQ],
+						[RETAIL_QUARTER_PROG],
+						[RETAIL_HALF],
+						[RETAIL_HALF_SEQ],
+						[RETAIL_HALF_PROG],
+						[RETAIL_YEAR],
+						[RETAIL_YEAR_SEQ],
+						[RETAIL_YEAR_PROG],
+						[GREGORIAN_WEEK],  
+						[GREGORIAN_WEEK_SEQ],    
+						[GREGORIAN_MONTH],    
+						[GREGORIAN_MONTH_SEQ],
+						[GREGORIAN_QUARTER],  
+						[GREGORIAN_QUARTER_SEQ],
+						[GREGORIAN_HALF],
+						[GREGORIAN_HALF_SEQ],
+						[GREGORIAN_YEAR],
+						[GREGORIAN_YEAR_SEQ]
+					)
+					SELECT 
+						@Day_in                                                                                         AS [DAY],
+						@CounterDay_in                                                                                  AS [DAY_SEQ],
+						DATEDIFF(DAY,@Today_in,@DayDate_in)                                                             AS [DAY_PROG],
+						@DayDate_in                                                                                     AS [DAY_DATE],
+						@PartialWeek_in                                                                                 AS [PARTIAL_WEEK],
+						@CounterPartialWeek_in                                                                          AS [PARTIAL_WEEK_SEQ],
+						@RetailWeek_in                                                                                  AS [RETAIL_WEEK],
+						@CounterRetailWeek_in                                                                           AS [RETAIL_WEEK_SEQ],
+						@RetailWeekProg_in                                                                              AS [RETAIL_WEEK_PROG],
+						0                                                                                               AS [RETAIL_WEEK_PERIOD],
+						CAST(@RetailWeekType_in AS VARCHAR)                                                             AS [RETAIL_WEEK_TYPE],
+						REPLICATE(''0'',2-len(CAST(@RetailMonth_in AS VARCHAR))) + CAST(@RetailMonth_in AS VARCHAR)     AS [RETAIL_MONTH],
+						@CounterRetailMonth_in                                                                          AS [RETAIL_MONTH_SEQ],
+						0																								as [RETAIL_MONTH_PROG],
+						0                                                                                               AS [RETAIL_MONTH_PERIOD],
+						REPLICATE(''0'',2-len(CAST(@RetailQuarter_in AS VARCHAR))) + CAST(@RetailQuarter_in AS VARCHAR) AS [RETAIL_QUARTER],
+						@CounterRetailQuarter_in                                                                        AS [RETAIL_QUARTER_SEQ],
+						0																								AS [RETAIL_QUARTER_PROG],
+						REPLICATE(''0'',2-len(CAST(@RetailHalf_in AS VARCHAR))) + CAST(@RetailHalf_in AS VARCHAR)       AS [RETAIL_HALF],
+						@CounterRetailHalf_in                                                                           AS [RETAIL_HALF_SEQ],
+						0																								AS [RETAIL_HALF_PROG],
+						@Year_in                                                                                        AS [RETAIL_YEAR],
+						@CounterYear_in                                                                                 AS [RETAIL_YEAR_SEQ],
+						0																								AS [RETAIL_YEAR_PROG],
+						@GregorianWeek_in                                                                               AS [GREGORIAN_WEEK],
+						@CounterGregorianWeek_in                                                                        AS [GREGORIAN_WEEK_SEQ],
+						@GregorianMonth_in                                                                              AS [GREGORIAN_MONTH],
+						@CounterGregorianMonth_in                                                                       AS [GREGORIAN_MONTH_SEQ],
+						@GregorianQuarter_in                                                                            AS [GREGORIAN_QUARTER],
+						@CounterGregorianQuarter_in                                                                     AS [GREGORIAN_QUARTER_SEQ],
+						@GregorianHalf_in                                                                               AS [GREGORIAN_HALF],
+						@CounterGregorianHalf_in                                                                        AS [GREGORIAN_HALF_SEQ],
+						@GregorianYear_in                                                                               AS [GREGORIAN_YEAR],
+						@CounterGregorianYear_in                                                                        AS [GREGORIAN_YEAR_SEQ]'
+            
+				SET @nPARAMS = '@Day_in VARCHAR(40),
+								@CounterDay_in INT,
+								@Today_in DATETIME,
+								@DayDate_in DATETIME,
+								@PartialWeek_in VARCHAR(40),
+								@CounterPartialWeek_in INT,
+								@RetailWeek_in VARCHAR(40),
+								@CounterRetailWeek_in INT,
+								@RetailWeekProg_in INT,
+								@RetailWeekType_in VARCHAR(40),
+								@RetailMonth_in VARCHAR(40),
+								@CounterRetailMonth_in INT,
+								@RetailQuarter_in VARCHAR(40),
+								@CounterRetailQuarter_in INT,
+								@RetailHalf_in VARCHAR(40),
+								@CounterRetailHalf_in INT,
+								@Year_in VARCHAR(40),
+								@CounterYear_in INT,
+								@GregorianWeek_in VARCHAR(40),
+								@CounterGregorianWeek_in INT,
+								@GregorianMonth_in VARCHAR(40),
+								@CounterGregorianMonth_in INT,
+								@GregorianQuarter_in VARCHAR(40),
+								@CounterGregorianQuarter_in INT,
+								@GregorianHalf_in VARCHAR(40),
+								@CounterGregorianHalf_in INT,
+								@GregorianYear_in VARCHAR(40),
+								@CounterGregorianYear_in INT'
+
+		EXEC sp_executesql
+						@nSQL,
+						@nPARAMS,
+						@Day_in = @Day,
+						@CounterDay_in = @CounterDay,
+						@Today_in =  @Today,
+						@DayDate_in = @DayDate,
+						@PartialWeek_in = @PartialWeek,
+						@CounterPartialWeek_in = @CounterPartialWeek,
+						@RetailWeek_in = @RetailWeek,
+						@CounterRetailWeek_in = @CounterRetailWeek,
+						@RetailWeekProg_in = @RetailWeekProg,
+						@RetailWeekType_in = @RetailWeekType,
+						@RetailMonth_in = @RetailMonth,
+						@CounterRetailMonth_in = @CounterRetailMonth,
+						@RetailQuarter_in = @RetailQuarter,
+						@CounterRetailQuarter_in = @CounterRetailQuarter,
+						@RetailHalf_in = @RetailHalf,
+						@CounterRetailHalf_in = @CounterRetailHalf,
+						@Year_in = @Year,
+						@CounterYear_in = @CounterYear,
+						@GregorianWeek_in = @GregorianWeek,
+						@CounterGregorianWeek_in = @CounterGregorianWeek,
+						@GregorianMonth_in = @GregorianMonth,
+						@CounterGregorianMonth_in = @CounterGregorianMonth,
+						@GregorianQuarter_in = @GregorianQuarter,
+						@CounterGregorianQuarter_in = @CounterGregorianQuarter,
+						@GregorianHalf_in = @GregorianHalf,
+						@CounterGregorianHalf_in = @CounterGregorianHalf,
+						@GregorianYear_in = @GregorianYear,
+						@CounterGregorianYear_in = @CounterGregorianYear
+
+		SET @ProgDay = @ProgDay + 1
+				SET @CounterDay = @CounterDay+1 
+            
+				IF @CounterDay%7 = 1
+				BEGIN
+					
+					SET @RetailWeekProg = @RetailWeekProg + 1
+					SET @CounterRetailWeek = @CounterRetailWeek +1
+					SET @CounterRetailWeekMonth = @CounterRetailWeekMonth + 1
+
+					if @CounterRetailWeek > 52
+					begin       
+						
+                                
+						set @Y=cast(datepart(year,DATEADD(DAY,@ProgDay-1+6,@FirstCalendarDay_Begin)) as varchar)
+						set @M=replicate('0',2-len(cast(datepart(Month,DATEADD(DAY,@ProgDay-1+6,@FirstCalendarDay_Begin)) as varchar))) + cast(datepart(Month,DATEADD(DAY,@ProgDay-1+6,@FirstCalendarDay_Begin)) as varchar)
+						set @D=convert(datetime,@Y+@M+'01',112)-1
+
+
+						if datediff(day,DATEADD(DAY,@ProgDay-1,@FirstCalendarDay_Begin),@D) >= 4            
+						begin
+							set @STEP_DESC = 'force WeekType to add an additional weeks (e.g. 454 became 455)'
+							-- creation of week 53
+							set @CounterRetailWeek =53
+							Set @RetailWeektype = @RetailWeektype+1 -- force WeekType to add an additional weeks (e.g. 454 became 455)
+                        
+							set @nSQL = '
+								update 
+									GenerateTime
+								set 
+									[RETAIL_WEEK_TYPE] = @RetailWeekType_in 
+								where   
+									[RETAIL_YEAR] = @Year_in and 
+									[RETAIL_MONTH_SEQ] = @CounterRetailMonth_in'
+
+
+							SET @nPARAMS = '@RetailWeekType_in VARCHAR(40),@CounterRetailMonth_in INT,@Year_in VARCHAR(40)'
+
+							EXEC sp_executesql 
+									@nSQL,
+									@nPARAMS,
+									@RetailWeekType_in = @RetailWeekType,
+									@CounterRetailMonth_in = @CounterRetailMonth,
+									@Year_in = @Year
+
+							end
+						else
+						begin
+							-- Focerced reset to 1 week 
+							set @CounterRetailWeek =1
+						end
+                    
+					end
+                            
+					IF @CounterRetailWeek>53 
+					BEGIN           
+						-- Focerced reset to 1 week 
+						SET @CounterRetailWeek = 1
+					END
+                
+					IF @CounterRetailWeekMonth > @RetailWeektype 
+					BEGIN
+					SET @CounterRetailWeekMonth = 1
+						SET @CounterRetailMonth=@CounterRetailMonth+1
+						SET @RetailMonth = @RetailMonth +1
+                    
+						IF @CounterRetailMonth%3 = 1
+						BEGIN
+							
+							Set @CounterRetailQuarter= @CounterRetailQuarter + 1
+							Set @RetailQuarter = @RetailQuarter + 1
+						END
+
+					IF @CounterRetailMonth%6 = 1
+						begin
+							
+							Set @CounterRetailHalf= @CounterRetailHalf + 1
+							Set @RetailHalf = @RetailHalf + 1
+						end
+                    
+						IF @RetailMonth >12 
+						BEGIN
+							
+							SET @CounterDay = 1
+							SET @CounterRetailWeek = 1
+							SET @RetailMonth  = 1
+							SET @CounterRetailMonth = 1
+							SET @RetailQuarter  = 1
+							SET @CounterRetailQuarter = 1
+							SET @RetailHalf  = 1
+							SET @CounterRetailHalf = 1
+							Set @Year = @Year + 1
+							Set @CounterYear = @CounterYear + 1
+						END
+						SET @CounterRetailWeekType = @CounterRetailWeekType + 1
+						IF @CounterRetailWeekType >3 
+						BEGIN
+							
+							SET @CounterRetailWeekType =1
+						END
+						SET @RetailWeekType = Substring(@Calendar_Type,@CounterRetailWeekType,1)
+                    
+					END  --// IF @CounterRetailWeekMonth > @RetailWeektype  //
+				END  --// IF @CounterDay%7 = 1     
+			END --// WHILE @ProgDay < @NumDayToBeCreated
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_WEEK_PROG and RETAIL_WEEK_PERIOD 
+			-------------------------------------------------------------------------------------------------
+
+			   
+			set @nSQL = '
+						UPDATE 
+							T
+						SET
+							RETAIL_WEEK_PROG = (RETAIL_WEEK_PROG - AA.WEEK_PROG_T0),
+							RETAIL_WEEK_PERIOD = case when RETAIL_WEEK_PROG - AA.WEEK_PROG_T0 <0 then 0 else 1 END  
+						FROM 
+							GenerateTime T 
+							CROSS JOIN (SELECT RETAIL_WEEK_PROG AS WEEK_PROG_T0 FROM GenerateTime WHERE DAY_PROG = 0 ) AA'
+			
+        
+			EXEC sp_sqlexec @nSQL
+
+	-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_MONTH_PERIOD
+			-------------------------------------------------------------------------------------------------      
+        
+			set @nSQL = '
+						UPDATE 
+							T
+						SET
+							RETAIL_MONTH_PERIOD = MAX_RETAIL_WEEK_PERIOD
+						FROM
+							GenerateTime T 
+							INNER JOIN (
+										SELECT 
+											RETAIL_YEAR,
+											RETAIL_MONTH,
+											MAX(RETAIL_WEEK_PERIOD) AS MAX_RETAIL_WEEK_PERIOD
+										FROM 
+											GenerateTime T 
+										GROUP BY
+											RETAIL_YEAR,
+											RETAIL_MONTH
+										) X ON
+								X.RETAIL_YEAR = T.RETAIL_YEAR AND
+								X.RETAIL_MONTH = T.RETAIL_MONTH'
+			
+			EXEC sp_sqlexec @nSQL
+
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_MONTH_PROG
+			-------------------------------------------------------------------------------------------------
+               
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_MONTH_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] + [RETAIL_MONTH] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR] + T.[RETAIL_MONTH]'
+			
+        
+			EXEC sp_sqlexec @nSQL
+
+
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_QUARTER_PROG
+			-------------------------------------------------------------------------------------------------
+               
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_QUARTER_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] + [RETAIL_QUARTER] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR] + T.[RETAIL_QUARTER]'
+			
+			EXEC sp_sqlexec @nSQL
+
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_HALF_PROG
+			-------------------------------------------------------------------------------------------------
+			        
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_HALF_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] + [RETAIL_HALF] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR] + T.[RETAIL_HALF]'
+	
+        EXEC sp_sqlexec @nSQL
+
+
+		-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_YEAR_PROG
+			-------------------------------------------------------------------------------------------------
+			set @STEP_DESC = 'update [RETAIL_YEAR_PROG] on output table'                   
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_YEAR_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR]'
+        
+			EXEC sp_sqlexec @nSQL
+
+			declare @test int
+			select @test = RETAIL_MONTH_PROG from (
+			select row_number()over(order by retail_week_prog) as rn,retail_week_prog,RETAIL_MONTH_PROG from GenerateTime group by retail_week_prog,RETAIL_MONTH_PROG --order by retail_week_prog
+			)t0 where retail_week_prog = 0
+			--select @test
+			update t0
+			set t0.RETAIL_MONTH_PROG = t1.new_month_prog
+			--select *
+			from GenerateTime t0
+			inner join (
+			select row_number()over(order by retail_month_prog)-@test as new_month_prog,RETAIL_MONTH_prog from GenerateTime  group by RETAIL_MONTH_prog) t1 on t1.RETAIL_MONTH_PROG = t0.RETAIL_MONTH_PROG
+
+
+			select @test = RETAIL_quarter_PROG from (
+			select row_number()over(order by retail_month_prog) as rn,retail_month_prog,RETAIL_quarter_PROG from GenerateTime group by retail_month_prog,RETAIL_quarter_PROG --order by retail_week_prog
+			)t0 where retail_month_prog = 0
+			--select @test
+			update t0
+			set t0.RETAIL_quarter_PROG = t1.new_quarter_prog
+			--select *
+			from GenerateTime t0
+			inner join (
+			select row_number()over(order by retail_quarter_prog)-@test as new_quarter_prog,RETAIL_quarter_prog from GenerateTime  group by RETAIL_quarter_prog) t1 on t1.RETAIL_QUARTER_PROG = t0.RETAIL_quarter_PROG
+
+			select @test = RETAIL_year_PROG from (
+			select row_number()over(order by retail_quarter_prog) as rn,retail_quarter_prog,RETAIL_year_PROG from GenerateTime group by retail_quarter_prog,RETAIL_year_PROG --order by retail_week_prog
+			)t0 where retail_quarter_prog = 0
+			--select @test
+			update t0
+			set t0.RETAIL_year_PROG = t1.new_year_prog
+			--select *
+			from GenerateTime t0
+			inner join (
+			select row_number()over(order by retail_year_prog)-@test as new_year_prog,RETAIL_year_prog from GenerateTime  group by RETAIL_year_prog) t1 on t1.RETAIL_year_PROG = t0.RETAIL_year_PROG
+
+			TRUNCATE TABLE MDM.IN_TIME
+
+	
+		insert into MDM.IN_TIME
+		select 
+		t0.LEAF_LEVEL_ID,t0.LEAF_LEVEL,t0.LEAF_LEVEL_DESCRIPTION,t0.LEAF_LEVEL_BUCKET_START,t0.LEAF_LEVEL_BUCKET_END,t0.LEAF_LEVEL_PROG
+		,
+		t1.LEVEL_1_ID,t1.LEVEL_1,t1.LEVEL_1_DESCRIPTION,t1.LEVEL_1_BUCKET_START,t1.LEVEL_1_BUCKET_END,t1.LEVEL_1_PROG
+		,
+		t2.LEVEL_2_ID,t2.LEVEL_2,t2.LEVEL_2_DESCRIPTION,t2.LEVEL_2_BUCKET_START,t2.LEVEL_2_BUCKET_END,t2.LEVEL_2_PROG
+		,
+		NULL AS MDM_STATUS, NULL AS MDM_MSG
+		from
+			(
+				select 
+				NULL AS [LEAF_LEVEL_ID]
+				,RETAIL_YEAR+' OP'+RETAIL_MONTH AS LEAF_LEVEL
+				,'-' AS [LEAF_LEVEL_DESCRIPTION]
+				,min(day_date) as LEAF_LEVEL_BUCKET_START
+				,max(DAY_DATE) as LEAF_LEVEL_BUCKET_END
+				,RETAIL_MONTH_PROG AS LEAF_LEVEL_PROG
+				from GenerateTime
+				group by RETAIL_YEAR,RETAIL_MONTH,RETAIL_MONTH_PROG
+			)t0
+		inner join 
+			(
+				select t0.RETAIL_MONTH_PROG, t0.LEVEL_1_ID,t0.LEVEL_1,t0.LEVEL_1_DESCRIPTION,t1.LEVEL_1_BUCKET_START,t1.LEVEL_1_BUCKET_END,t0.LEVEL_1_PROG from 
+				(select 
+				RETAIL_MONTH_PROG,
+				NULL AS [LEVEL_1_ID]
+				,RETAIL_YEAR+' OQ'+RETAIL_QUARTER AS [LEVEL_1]
+				,'-' AS [LEVEL_1_DESCRIPTION]
+				,min(day_date) as LEVEL_1_BUCKET_START
+				,max(DAY_DATE) as LEVEL_1_BUCKET_END
+				,RETAIL_QUARTER_PROG AS LEVEL_1_PROG
+				from GenerateTime
+				group by RETAIL_YEAR,RETAIL_QUARTER,RETAIL_QUARTER_PROG,RETAIL_MONTH_PROG) t0
+				inner join (select RETAIL_QUARTER_PROG,min(day_date) as LEVEL_1_BUCKET_START,max(day_date) as LEVEL_1_BUCKET_END from GenerateTime
+				group by RETAIL_QUARTER_PROG) t1 on t1.RETAIL_QUARTER_PROG =t0.LEVEL_1_PROG
+			) t1 on t1.RETAIL_MONTH_PROG = t0.LEAF_LEVEL_PROG
+		inner join 
+			(
+				select t0.RETAIL_QUARTER_PROG, t0.LEVEL_2_ID,t0.LEVEL_2,t0.LEVEL_2_DESCRIPTION,t1.LEVEL_2_BUCKET_START,t1.LEVEL_2_BUCKET_END,t0.LEVEL_2_PROG from 
+				(select 
+				RETAIL_QUARTER_PROG,
+				NULL AS [LEVEL_2_ID]
+				,'OY'+RETAIL_YEAR AS [LEVEL_2]
+				,'-' AS [LEVEL_2_DESCRIPTION]
+				,min(day_date) as LEVEL_2_BUCKET_START
+				,max(DAY_DATE) as LEVEL_2_BUCKET_END
+				,RETAIL_YEAR_PROG AS LEVEL_2_PROG
+				from GenerateTime
+				group by RETAIL_YEAR,RETAIL_QUARTER_PROG,RETAIL_YEAR_PROG) t0
+				inner join (select RETAIL_YEAR_PROG,min(day_date) as LEVEL_2_BUCKET_START,max(day_date) as LEVEL_2_BUCKET_END from GenerateTime
+				group by RETAIL_YEAR_PROG) t1 on t1.RETAIL_YEAR_PROG =t0.LEVEL_2_PROG
+			) t2 on t2.RETAIL_QUARTER_PROG = t1.LEVEL_1_PROG
+		order by LEAF_LEVEL_PROG
+	
+	
+	--if (@LEAF = 'W')
+	--begin
+	--insert into MDM.IN_TIME
+	--	select 
+	--	t0.LEAF_LEVEL_ID,t0.LEAF_LEVEL,t0.LEAF_LEVEL_DESCRIPTION,t0.LEAF_LEVEL_BUCKET_START,t0.LEAF_LEVEL_BUCKET_END,t0.LEAF_LEVEL_PROG
+	--	,
+	--	t1.LEVEL_1_ID,t1.LEVEL_1,t1.LEVEL_1_DESCRIPTION,t1.LEVEL_1_BUCKET_START,t1.LEVEL_1_BUCKET_END,t1.LEVEL_1_PROG
+	--	,
+	--	t2.LEVEL_2_ID,t2.LEVEL_2,t2.LEVEL_2_DESCRIPTION,t2.LEVEL_2_BUCKET_START,t2.LEVEL_2_BUCKET_END,t2.LEVEL_2_PROG
+	--	,
+	--	t3.LEVEL_3_ID,t3.LEVEL_3,t3.LEVEL_3_DESCRIPTION,t3.LEVEL_3_BUCKET_START,t3.LEVEL_3_BUCKET_END,t3.LEVEL_3_PROG
+	--	,
+	--	NULL AS MDM_STATUS, NULL AS MDM_MSG
+	--	from(
+	--	select 
+	--	NULL AS [LEAF_LEVEL_ID]
+	--	,RETAIL_YEAR+' OW'+CAST(RETAIL_WEEK_SEQ AS varchar) AS LEAF_LEVEL
+	--	,'-' AS [LEAF_LEVEL_DESCRIPTION]
+	--	,min(day_date) as LEAF_LEVEL_BUCKET_START
+	--	,max(DAY_DATE) as LEAF_LEVEL_BUCKET_END
+	--	,RETAIL_WEEK_PROG AS LEAF_LEVEL_PROG
+	--	from GenerateTime
+	--	group by RETAIL_YEAR,RETAIL_WEEK_SEQ,RETAIL_WEEK_PROG
+	--	)t0
+	--	inner join (
+	--	select 
+	--	RETAIL_WEEK_PROG,
+	--	NULL AS [LEVEL_1_ID]
+	--	,RETAIL_YEAR+' OP'+CAST(RETAIL_MONTH_SEQ AS VARCHAR) AS [LEVEL_1]
+	--	,'-' AS [LEVEL_1_DESCRIPTION]
+	--	,min(day_date) as LEVEL_1_BUCKET_START
+	--	,max(DAY_DATE) as LEVEL_1_BUCKET_END
+	--	,RETAIL_MONTH_PROG AS LEVEL_1_PROG
+	--	from GenerateTime
+	--	group by RETAIL_YEAR,RETAIL_MONTH_SEQ,RETAIL_MONTH_PROG,RETAIL_WEEK_PROG) t1 on t1.RETAIL_WEEK_PROG = t0.LEAF_LEVEL_PROG
+	--	inner join (
+	--	select 
+	--	RETAIL_MONTH_PROG,
+	--	NULL AS [LEVEL_2_ID]
+	--	,RETAIL_YEAR+' OQ'+CAST(RETAIL_QUARTER_SEQ AS VARCHAR) AS [LEVEL_2]
+	--	,'-' AS [LEVEL_2_DESCRIPTION]
+	--	,min(day_date) as LEVEL_2_BUCKET_START
+	--	,max(DAY_DATE) as LEVEL_2_BUCKET_END
+	--	,RETAIL_QUARTER_PROG AS LEVEL_2_PROG
+	--	from GenerateTime
+	--	group by RETAIL_YEAR,RETAIL_QUARTER_SEQ,RETAIL_QUARTER_PROG,RETAIL_MONTH_PROG) t2 on t2.RETAIL_MONTH_PROG = t1.LEVEL_1_PROG
+	--	inner join (
+	--	select 
+	--	RETAIL_QUARTER_PROG,
+	--	NULL AS [LEVEL_3_ID]
+	--	,'OY'+RETAIL_YEAR AS [LEVEL_3]
+	--	,'-' AS [LEVEL_3_DESCRIPTION]
+	--	,min(day_date) as LEVEL_3_BUCKET_START
+	--	,max(DAY_DATE) as LEVEL_3_BUCKET_END
+	--	,RETAIL_YEAR_PROG AS LEVEL_3_PROG
+	--	from GenerateTime
+	--	group by RETAIL_YEAR,RETAIL_QUARTER_PROG,RETAIL_YEAR_PROG) t3 on t3.RETAIL_QUARTER_PROG = t2.LEVEL_2_PROG
+	--	order by LEAF_LEVEL_PROG
+	--end
+END
+ELSE
+	BEGIN
+	--	if @FIRST_CALENDAR_DAY IS NULL 
+	--	set @FIRST_CALENDAR_DAY = convert(datetime,'20180204',112)
+	--else
+	--	if isdate(@FIRST_CALENDAR_DAY) = 0  
+	--	print 'Invalid value for parameter @FIRST_CALENDAR_DAY.'
+	--	--return;
+	----end
+	select @FIRST_CALENDAR_DAY = min(bucket_start) from dwh.D_TIME_PERIOD
+
+	if @CALENDAR_TYPE is null 
+		set @CALENDAR_TYPE = '445'
+	else
+		if @CALENDAR_TYPE not in ('454','445','544')
+		print 'Invalid value for parameter @CALENDAR_TYPE.'
+		--return;
+
+	--if @FIRST_DAY_OF_WEEK is null
+	--	set @FIRST_DAY_OF_WEEK = 1
+	--else
+	--	if @FIRST_DAY_OF_WEEK > 7 or @FIRST_DAY_OF_WEEK < 1 
+	--	print 'Invalid value for parameter @FIRST_DAY_OF_WEEK.'
+	--	--return;
+	select @FIRST_DAY_OF_WEEK = DATEPART(dw,@FIRST_CALENDAR_DAY)
+
+	select @TODAY = min(bucket_start) from dwh.D_TIME_PERIOD where PROGRESSION = 0
+
+	if @FUTURE_YEARS is null 
+		SET @FUTURE_YEARS = 2
+		--return;
+
+	--if @LEAF is null 
+	--	SET @LEAF = 'P'
+	--else
+	--	if @LEAF not in ('W','P')
+	--	print 'Invalid value for parameter @LEAF.'
+		--return;
+
+	--SET @FIRST_CALENDAR_DAY = ISNULL(@FIRST_CALENDAR_DAY,'20180202')
+	--SET @CALENDAR_TYPE = ISNULL(@CALENDAR_TYPE,'454')
+	--SET @FIRST_DAY_OF_WEEK = ISNULL(@FIRST_DAY_OF_WEEK,7)
+	--SET @TODAY = NULL
+	--SET @FUTURE_YEARS = ISNULL (@FUTURE_YEARS,2)
+	--SET @LEAF = ISNULL(@LEAF,'M')
+
+	SET @FUTURE_WEEKS = @FUTURE_YEARS*52
+
+	--TABLE
+	IF OBJECT_ID(N'GenerateTime') IS NOT NULL
+	BEGIN
+	DROP TABLE GenerateTime
+	END
+	
+	CREATE TABLE GenerateTime
+						(
+							[DAY]                   [varchar](40)   NOT NULL,
+							[DAY_SEQ]               [int]           NOT NULL,
+							[DAY_PROG]              [int]           NOT NULL,
+							[DAY_DATE]              [datetime]      NOT NULL,
+							[PARTIAL_WEEK]          [varchar](40)   NOT NULL,
+							[PARTIAL_WEEK_SEQ]      [int]           NOT NULL,
+							[RETAIL_WEEK]           [varchar](40)   NOT NULL,
+							[RETAIL_WEEK_SEQ]       [int]           NOT NULL,   
+							[RETAIL_WEEK_PROG]      [int]           NOT NULL,   
+							[RETAIL_WEEK_PERIOD]    [int]           NOT NULL,   
+							[RETAIL_WEEK_TYPE]      [varchar](40)   NOT NULL,
+							[RETAIL_MONTH]          [varchar](40)   NOT NULL,
+							[RETAIL_MONTH_SEQ]      [int]           NOT NULL,
+							[RETAIL_MONTH_PROG]     [int]           NOT NULL,
+							[RETAIL_MONTH_PERIOD]   [int]           NOT NULL,   
+							[RETAIL_QUARTER]        [varchar](40)   NOT NULL,
+							[RETAIL_QUARTER_SEQ]    [int]           NOT NULL,
+							[RETAIL_QUARTER_PROG]   [int]           NOT NULL,
+							[RETAIL_HALF]           [varchar](40)   NOT NULL,
+							[RETAIL_HALF_SEQ]       [int]           NOT NULL,
+							[RETAIL_HALF_PROG]      [int]           NOT NULL,
+							[RETAIL_YEAR]           [varchar](40)   NOT NULL,
+							[RETAIL_YEAR_SEQ]       [int]           NOT NULL,
+							[RETAIL_YEAR_PROG]      [int]           NOT NULL,
+							[GREGORIAN_WEEK]        [varchar](40)   NOT NULL,
+							[GREGORIAN_WEEK_SEQ]    [int]           NOT NULL,       
+							[GREGORIAN_MONTH]       [varchar](40)   NOT NULL,
+							[GREGORIAN_MONTH_SEQ]   [int]           NOT NULL,
+							[GREGORIAN_QUARTER]     [varchar](40)   NOT NULL,
+							[GREGORIAN_QUARTER_SEQ] [int]           NOT NULL,
+							[GREGORIAN_HALF]        [varchar](40)   NOT NULL,
+							[GREGORIAN_HALF_SEQ]    [int]           NOT NULL,
+							[GREGORIAN_YEAR]        [varchar](40)   NOT NULL,
+							[GREGORIAN_YEAR_SEQ]    [int]           NOT NULL
+						)
+
+		--PARAMS
+		
+
+		SET @Delta =DATEPART(DW,@Today)
+		SET @Today_Week_Begin = DATEADD(DAY,1-@Delta,@Today) 
+
+		select @Extension = dateadd(day,1,max(bucket_end)) from dwh.D_TIME_PERIOD
+		SET @Delta =DATEPART(DW,@Extension)
+		set @Extension_Week_Begin = DATEADD(DAY,1-@Delta,@Extension)
+
+		SET @Delta =DATEPART(DW,@First_Calendar_Day)        
+		--SET @FirstCalendarDay_Begin = @FIRST_CALENDAR_DAY
+		SET @FirstCalendarDay_Begin = DATEADD(DAY,@FIRST_DAY_OF_WEEK-@Delta,@First_Calendar_Day)
+		SET @MAX_FutureDate = DATEADD(WEEK,@Future_Weeks,@Extension_Week_Begin)+6
+
+		
+		
+		if ( @AppDbMaxDate > @MAX_FutureDate ) set @MAX_FutureDate = dateadd(day,1,@AppDbMaxDate)
+
+		SET @NumDayToBeCreated = datediff(day,@FirstCalendarDay_Begin,@MAX_FutureDate)
+        
+		SET @ProgDay = 0
+		SET @CounterDay = 1
+		SET @RetailWeekProg = 1
+		SET @CounterRetailWeek = 1
+		SET @CounterRetailWeekMonth = 1
+		SET @CounterRetailMonth = 1
+		SET @RetailMonth = 1
+		SET @CounterRetailQuarter = 1
+		SET @RetailQuarter = 1
+		SET @CounterRetailHalf = 1
+		SET @RetailHalf = 1
+		SET @CounterRetailWeekType = 1
+		SET @RetailWeekType = SUBSTRING(@Calendar_Type,@CounterRetailWeekType,1)
+		SET @CounterYear = 1
+		SET @Year = DATEPART(YEAR,@First_Calendar_Day)
+		SET @CounterGregorianYear = 1
+
+		WHILE @ProgDay < @NumDayToBeCreated
+		BEGIN
+			SET @DayDate = DATEADD(DAY,@ProgDay,@FirstCalendarDay_Begin)
+			SET @Day = CONVERT(VARCHAR,@DayDate,112)
+			SET @RetailWeek = REPLICATE('0',2-LEN(CAST(@CounterRetailWeek AS VARCHAR))) + CAST(@CounterRetailWeek AS VARCHAR)       
+            
+			if isnull(@GregorianWeek,0) <> datepart(WW,@DayDate)    
+			begin           
+				SET @CounterPartialWeek = 1     
+			end 
+            
+			if isnull(@GregorianWeek,0) = datepart(WW,@DayDate) and isnull(@GregorianMonth,0) <> datepart(MM,@DayDate)
+			begin
+				SET @CounterPartialWeek = 2     
+			end 
+            
+			SET @PartialWeek = REPLICATE('0',2-LEN(@CounterPartialWeek)) + CAST(@CounterPartialWeek AS VARCHAR)     
+            
+			SET @CounterGregorianWeek = datepart(WK,@DayDate)   
+			SET @GregorianWeek = REPLICATE('0',2-LEN(CAST(datepart(WK,@DayDate) AS VARCHAR))) + CAST(datepart(WK,@DayDate) AS VARCHAR)  
+			SET @CounterGregorianMonth = datepart(MM,@DayDate)      
+			SET @GregorianMonth = REPLICATE('0',2-LEN(CAST(datepart(MM,@DayDate) AS VARCHAR))) + CAST(datepart(MM,@DayDate) AS VARCHAR)
+            
+			SET @CounterGregorianQuarter = CASE 
+												when datepart(MM,@DayDate) IN (1,2,3) then 1
+												when datepart(MM,@DayDate) IN (4,5,6) then 2
+												when datepart(MM,@DayDate) IN (7,8,9) then 3
+												when datepart(MM,@DayDate) IN (10,11,12) then 4
+											END      
+			SET @GregorianQuarter = REPLICATE('0',2-LEN(@CounterGregorianQuarter)) + CAST(@CounterGregorianQuarter AS VARCHAR)      
+            
+			SET @CounterGregorianHalf = CASE    
+											when datepart(MM,@DayDate) IN (1,2,3,4,5,6) then 1
+											when datepart(MM,@DayDate) IN (6,7,8,9,10,11,12) then 2         
+										END
+			SET @GregorianHalf = REPLICATE('0',2-LEN(@CounterGregorianHalf)) + CAST(@CounterGregorianHalf AS VARCHAR)       
+                    
+			if @GregorianYear <> datepart(YYYY,@DayDate)            
+				SET @CounterGregorianYear = @CounterGregorianYear + 1
+			SET @GregorianYear = datepart(YYYY,@DayDate)        
+
+
+		set @nSQL = '
+					INSERT INTO 
+						[dbo].[GenerateTime] 
+					(
+						[DAY],
+						[DAY_SEQ],
+						[DAY_PROG],    
+						[DAY_DATE],
+						[PARTIAL_WEEK],
+						[PARTIAL_WEEK_SEQ],
+						[RETAIL_WEEK],
+						[RETAIL_WEEK_SEQ],
+						[RETAIL_WEEK_PROG],
+						[RETAIL_WEEK_PERIOD],      
+						[RETAIL_WEEK_TYPE],
+						[RETAIL_MONTH],
+						[RETAIL_MONTH_SEQ],
+						[RETAIL_MONTH_PROG],    
+						[RETAIL_MONTH_PERIOD],  
+						[RETAIL_QUARTER],
+						[RETAIL_QUARTER_SEQ],
+						[RETAIL_QUARTER_PROG],
+						[RETAIL_HALF],
+						[RETAIL_HALF_SEQ],
+						[RETAIL_HALF_PROG],
+						[RETAIL_YEAR],
+						[RETAIL_YEAR_SEQ],
+						[RETAIL_YEAR_PROG],
+						[GREGORIAN_WEEK],  
+						[GREGORIAN_WEEK_SEQ],    
+						[GREGORIAN_MONTH],    
+						[GREGORIAN_MONTH_SEQ],
+						[GREGORIAN_QUARTER],  
+						[GREGORIAN_QUARTER_SEQ],
+						[GREGORIAN_HALF],
+						[GREGORIAN_HALF_SEQ],
+						[GREGORIAN_YEAR],
+						[GREGORIAN_YEAR_SEQ]
+					)
+					SELECT 
+						@Day_in                                                                                         AS [DAY],
+						@CounterDay_in                                                                                  AS [DAY_SEQ],
+						DATEDIFF(DAY,@Today_in,@DayDate_in)                                                             AS [DAY_PROG],
+						@DayDate_in                                                                                     AS [DAY_DATE],
+						@PartialWeek_in                                                                                 AS [PARTIAL_WEEK],
+						@CounterPartialWeek_in                                                                          AS [PARTIAL_WEEK_SEQ],
+						@RetailWeek_in                                                                                  AS [RETAIL_WEEK],
+						@CounterRetailWeek_in                                                                           AS [RETAIL_WEEK_SEQ],
+						@RetailWeekProg_in                                                                              AS [RETAIL_WEEK_PROG],
+						0                                                                                               AS [RETAIL_WEEK_PERIOD],
+						CAST(@RetailWeekType_in AS VARCHAR)                                                             AS [RETAIL_WEEK_TYPE],
+						REPLICATE(''0'',2-len(CAST(@RetailMonth_in AS VARCHAR))) + CAST(@RetailMonth_in AS VARCHAR)     AS [RETAIL_MONTH],
+						@CounterRetailMonth_in                                                                          AS [RETAIL_MONTH_SEQ],
+						0																								as [RETAIL_MONTH_PROG],
+						0                                                                                               AS [RETAIL_MONTH_PERIOD],
+						REPLICATE(''0'',2-len(CAST(@RetailQuarter_in AS VARCHAR))) + CAST(@RetailQuarter_in AS VARCHAR) AS [RETAIL_QUARTER],
+						@CounterRetailQuarter_in                                                                        AS [RETAIL_QUARTER_SEQ],
+						0																								AS [RETAIL_QUARTER_PROG],
+						REPLICATE(''0'',2-len(CAST(@RetailHalf_in AS VARCHAR))) + CAST(@RetailHalf_in AS VARCHAR)       AS [RETAIL_HALF],
+						@CounterRetailHalf_in                                                                           AS [RETAIL_HALF_SEQ],
+						0																								AS [RETAIL_HALF_PROG],
+						@Year_in                                                                                        AS [RETAIL_YEAR],
+						@CounterYear_in                                                                                 AS [RETAIL_YEAR_SEQ],
+						0																								AS [RETAIL_YEAR_PROG],
+						@GregorianWeek_in                                                                               AS [GREGORIAN_WEEK],
+						@CounterGregorianWeek_in                                                                        AS [GREGORIAN_WEEK_SEQ],
+						@GregorianMonth_in                                                                              AS [GREGORIAN_MONTH],
+						@CounterGregorianMonth_in                                                                       AS [GREGORIAN_MONTH_SEQ],
+						@GregorianQuarter_in                                                                            AS [GREGORIAN_QUARTER],
+						@CounterGregorianQuarter_in                                                                     AS [GREGORIAN_QUARTER_SEQ],
+						@GregorianHalf_in                                                                               AS [GREGORIAN_HALF],
+						@CounterGregorianHalf_in                                                                        AS [GREGORIAN_HALF_SEQ],
+						@GregorianYear_in                                                                               AS [GREGORIAN_YEAR],
+						@CounterGregorianYear_in                                                                        AS [GREGORIAN_YEAR_SEQ]'
+            
+				SET @nPARAMS = '@Day_in VARCHAR(40),
+								@CounterDay_in INT,
+								@Today_in DATETIME,
+								@DayDate_in DATETIME,
+								@PartialWeek_in VARCHAR(40),
+								@CounterPartialWeek_in INT,
+								@RetailWeek_in VARCHAR(40),
+								@CounterRetailWeek_in INT,
+								@RetailWeekProg_in INT,
+								@RetailWeekType_in VARCHAR(40),
+								@RetailMonth_in VARCHAR(40),
+								@CounterRetailMonth_in INT,
+								@RetailQuarter_in VARCHAR(40),
+								@CounterRetailQuarter_in INT,
+								@RetailHalf_in VARCHAR(40),
+								@CounterRetailHalf_in INT,
+								@Year_in VARCHAR(40),
+								@CounterYear_in INT,
+								@GregorianWeek_in VARCHAR(40),
+								@CounterGregorianWeek_in INT,
+								@GregorianMonth_in VARCHAR(40),
+								@CounterGregorianMonth_in INT,
+								@GregorianQuarter_in VARCHAR(40),
+								@CounterGregorianQuarter_in INT,
+								@GregorianHalf_in VARCHAR(40),
+								@CounterGregorianHalf_in INT,
+								@GregorianYear_in VARCHAR(40),
+								@CounterGregorianYear_in INT'
+
+		EXEC sp_executesql
+						@nSQL,
+						@nPARAMS,
+						@Day_in = @Day,
+						@CounterDay_in = @CounterDay,
+						@Today_in =  @Today,
+						@DayDate_in = @DayDate,
+						@PartialWeek_in = @PartialWeek,
+						@CounterPartialWeek_in = @CounterPartialWeek,
+						@RetailWeek_in = @RetailWeek,
+						@CounterRetailWeek_in = @CounterRetailWeek,
+						@RetailWeekProg_in = @RetailWeekProg,
+						@RetailWeekType_in = @RetailWeekType,
+						@RetailMonth_in = @RetailMonth,
+						@CounterRetailMonth_in = @CounterRetailMonth,
+						@RetailQuarter_in = @RetailQuarter,
+						@CounterRetailQuarter_in = @CounterRetailQuarter,
+						@RetailHalf_in = @RetailHalf,
+						@CounterRetailHalf_in = @CounterRetailHalf,
+						@Year_in = @Year,
+						@CounterYear_in = @CounterYear,
+						@GregorianWeek_in = @GregorianWeek,
+						@CounterGregorianWeek_in = @CounterGregorianWeek,
+						@GregorianMonth_in = @GregorianMonth,
+						@CounterGregorianMonth_in = @CounterGregorianMonth,
+						@GregorianQuarter_in = @GregorianQuarter,
+						@CounterGregorianQuarter_in = @CounterGregorianQuarter,
+						@GregorianHalf_in = @GregorianHalf,
+						@CounterGregorianHalf_in = @CounterGregorianHalf,
+						@GregorianYear_in = @GregorianYear,
+						@CounterGregorianYear_in = @CounterGregorianYear
+
+		SET @ProgDay = @ProgDay + 1
+				SET @CounterDay = @CounterDay+1 
+            
+				IF @CounterDay%7 = 1
+				BEGIN
+					
+					SET @RetailWeekProg = @RetailWeekProg + 1
+					SET @CounterRetailWeek = @CounterRetailWeek +1
+					SET @CounterRetailWeekMonth = @CounterRetailWeekMonth + 1
+
+					if @CounterRetailWeek > 52
+					begin       
+						
+                                
+						set @Y=cast(datepart(year,DATEADD(DAY,@ProgDay-1+6,@FirstCalendarDay_Begin)) as varchar)
+						set @M=replicate('0',2-len(cast(datepart(Month,DATEADD(DAY,@ProgDay-1+6,@FirstCalendarDay_Begin)) as varchar))) + cast(datepart(Month,DATEADD(DAY,@ProgDay-1+6,@FirstCalendarDay_Begin)) as varchar)
+						set @D=convert(datetime,@Y+@M+'01',112)-1
+
+
+						if datediff(day,DATEADD(DAY,@ProgDay-1,@FirstCalendarDay_Begin),@D) >= 4            
+						begin
+							set @STEP_DESC = 'force WeekType to add an additional weeks (e.g. 454 became 455)'
+							-- creation of week 53
+							set @CounterRetailWeek =53
+							Set @RetailWeektype = @RetailWeektype+1 -- force WeekType to add an additional weeks (e.g. 454 became 455)
+                        
+							set @nSQL = '
+								update 
+									GenerateTime
+								set 
+									[RETAIL_WEEK_TYPE] = @RetailWeekType_in 
+								where   
+									[RETAIL_YEAR] = @Year_in and 
+									[RETAIL_MONTH_SEQ] = @CounterRetailMonth_in'
+
+
+							SET @nPARAMS = '@RetailWeekType_in VARCHAR(40),@CounterRetailMonth_in INT,@Year_in VARCHAR(40)'
+
+							EXEC sp_executesql 
+									@nSQL,
+									@nPARAMS,
+									@RetailWeekType_in = @RetailWeekType,
+									@CounterRetailMonth_in = @CounterRetailMonth,
+									@Year_in = @Year
+
+							end
+						else
+						begin
+							-- Focerced reset to 1 week 
+							set @CounterRetailWeek =1
+						end
+                    
+					end
+                            
+					IF @CounterRetailWeek>53 
+					BEGIN           
+						-- Focerced reset to 1 week 
+						SET @CounterRetailWeek = 1
+					END
+                
+					IF @CounterRetailWeekMonth > @RetailWeektype 
+					BEGIN
+					SET @CounterRetailWeekMonth = 1
+						SET @CounterRetailMonth=@CounterRetailMonth+1
+						SET @RetailMonth = @RetailMonth +1
+                    
+						IF @CounterRetailMonth%3 = 1
+						BEGIN
+							
+							Set @CounterRetailQuarter= @CounterRetailQuarter + 1
+							Set @RetailQuarter = @RetailQuarter + 1
+						END
+
+					IF @CounterRetailMonth%6 = 1
+						begin
+							
+							Set @CounterRetailHalf= @CounterRetailHalf + 1
+							Set @RetailHalf = @RetailHalf + 1
+						end
+                    
+						IF @RetailMonth >12 
+						BEGIN
+							
+							SET @CounterDay = 1
+							SET @CounterRetailWeek = 1
+							SET @RetailMonth  = 1
+							SET @CounterRetailMonth = 1
+							SET @RetailQuarter  = 1
+							SET @CounterRetailQuarter = 1
+							SET @RetailHalf  = 1
+							SET @CounterRetailHalf = 1
+							Set @Year = @Year + 1
+							Set @CounterYear = @CounterYear + 1
+						END
+						SET @CounterRetailWeekType = @CounterRetailWeekType + 1
+						IF @CounterRetailWeekType >3 
+						BEGIN
+							
+							SET @CounterRetailWeekType =1
+						END
+						SET @RetailWeekType = Substring(@Calendar_Type,@CounterRetailWeekType,1)
+                    
+					END  --// IF @CounterRetailWeekMonth > @RetailWeektype  //
+				END  --// IF @CounterDay%7 = 1     
+			END --// WHILE @ProgDay < @NumDayToBeCreated
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_WEEK_PROG and RETAIL_WEEK_PERIOD 
+			-------------------------------------------------------------------------------------------------
+
+			   
+			set @nSQL = '
+						UPDATE 
+							T
+						SET
+							RETAIL_WEEK_PROG = (RETAIL_WEEK_PROG - AA.WEEK_PROG_T0),
+							RETAIL_WEEK_PERIOD = case when RETAIL_WEEK_PROG - AA.WEEK_PROG_T0 <0 then 0 else 1 END  
+						FROM 
+							GenerateTime T 
+							CROSS JOIN (SELECT RETAIL_WEEK_PROG AS WEEK_PROG_T0 FROM GenerateTime WHERE DAY_PROG = 0 ) AA'
+			
+        
+			EXEC sp_sqlexec @nSQL
+
+	-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_MONTH_PERIOD
+			-------------------------------------------------------------------------------------------------      
+        
+			set @nSQL = '
+						UPDATE 
+							T
+						SET
+							RETAIL_MONTH_PERIOD = MAX_RETAIL_WEEK_PERIOD
+						FROM
+							GenerateTime T 
+							INNER JOIN (
+										SELECT 
+											RETAIL_YEAR,
+											RETAIL_MONTH,
+											MAX(RETAIL_WEEK_PERIOD) AS MAX_RETAIL_WEEK_PERIOD
+										FROM 
+											GenerateTime T 
+										GROUP BY
+											RETAIL_YEAR,
+											RETAIL_MONTH
+										) X ON
+								X.RETAIL_YEAR = T.RETAIL_YEAR AND
+								X.RETAIL_MONTH = T.RETAIL_MONTH'
+			
+			EXEC sp_sqlexec @nSQL
+
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_MONTH_PROG
+			-------------------------------------------------------------------------------------------------
+               
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_MONTH_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] + [RETAIL_MONTH] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR] + T.[RETAIL_MONTH]'
+			
+        
+			EXEC sp_sqlexec @nSQL
+
+
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_QUARTER_PROG
+			-------------------------------------------------------------------------------------------------
+               
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_QUARTER_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] + [RETAIL_QUARTER] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR] + T.[RETAIL_QUARTER]'
+			
+			EXEC sp_sqlexec @nSQL
+
+-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_HALF_PROG
+			-------------------------------------------------------------------------------------------------
+			        
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_HALF_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] + [RETAIL_HALF] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR] + T.[RETAIL_HALF]'
+	
+        EXEC sp_sqlexec @nSQL
+
+
+		-------------------------------------------------------------------------------------------------
+			-- Update RETAIL_YEAR_PROG
+			-------------------------------------------------------------------------------------------------
+			set @STEP_DESC = 'update [RETAIL_YEAR_PROG] on output table'                   
+			set @nSQL = '
+				UPDATE 
+					T 
+				SET
+					T.[RETAIL_YEAR_PROG] = P.[Prog]
+				FROM
+					GenerateTime T
+					INNER JOIN	(
+								SELECT
+									[Caption],
+									ROW_NUMBER() OVER(ORDER BY [Caption]) AS [Prog]
+								FROM
+									(
+									SELECT DISTINCT
+										[RETAIL_YEAR] AS [Caption] 
+									FROM 
+										GenerateTime
+									) X
+								) P ON
+						P.[Caption] = T.[RETAIL_YEAR]'
+        
+			EXEC sp_sqlexec @nSQL
+
+			--declare @test int
+			select @test = RETAIL_MONTH_PROG from (
+			select row_number()over(order by retail_week_prog) as rn,retail_week_prog,RETAIL_MONTH_PROG from GenerateTime group by retail_week_prog,RETAIL_MONTH_PROG --order by retail_week_prog
+			)t0 where retail_week_prog = 0
+			--select @test
+			update t0
+			set t0.RETAIL_MONTH_PROG = t1.new_month_prog
+			--select *
+			from GenerateTime t0
+			inner join (
+			select row_number()over(order by retail_month_prog)-@test as new_month_prog,RETAIL_MONTH_prog from GenerateTime  group by RETAIL_MONTH_prog) t1 on t1.RETAIL_MONTH_PROG = t0.RETAIL_MONTH_PROG
+
+
+			select @test = RETAIL_quarter_PROG from (
+			select row_number()over(order by retail_month_prog) as rn,retail_month_prog,RETAIL_quarter_PROG from GenerateTime group by retail_month_prog,RETAIL_quarter_PROG --order by retail_week_prog
+			)t0 where retail_month_prog = 0
+			--select @test
+			update t0
+			set t0.RETAIL_quarter_PROG = t1.new_quarter_prog
+			--select *
+			from GenerateTime t0
+			inner join (
+			select row_number()over(order by retail_quarter_prog)-@test as new_quarter_prog,RETAIL_quarter_prog from GenerateTime  group by RETAIL_quarter_prog) t1 on t1.RETAIL_QUARTER_PROG = t0.RETAIL_quarter_PROG
+
+			select @test = RETAIL_year_PROG from (
+			select row_number()over(order by retail_quarter_prog) as rn,retail_quarter_prog,RETAIL_year_PROG from GenerateTime group by retail_quarter_prog,RETAIL_year_PROG --order by retail_week_prog
+			)t0 where retail_quarter_prog = 0
+			--select @test
+			update t0
+			set t0.RETAIL_year_PROG = t1.new_year_prog
+			--select *
+			from GenerateTime t0
+			inner join (
+			select row_number()over(order by retail_year_prog)-@test as new_year_prog,RETAIL_year_prog from GenerateTime  group by RETAIL_year_prog) t1 on t1.RETAIL_year_PROG = t0.RETAIL_year_PROG
+
+			TRUNCATE TABLE MDM.IN_TIME
+
+	
+
+		insert into MDM.IN_TIME
+		select t10.* from
+		(
+		select 
+		t0.LEAF_LEVEL_ID,t0.LEAF_LEVEL,t0.LEAF_LEVEL_DESCRIPTION,t0.LEAF_LEVEL_BUCKET_START,t0.LEAF_LEVEL_BUCKET_END,t0.LEAF_LEVEL_PROG
+		,
+		t1.LEVEL_1_ID,t1.LEVEL_1,t1.LEVEL_1_DESCRIPTION,t1.LEVEL_1_BUCKET_START,t1.LEVEL_1_BUCKET_END,t1.LEVEL_1_PROG
+		,
+		t2.LEVEL_2_ID,t2.LEVEL_2,t2.LEVEL_2_DESCRIPTION,t2.LEVEL_2_BUCKET_START,t2.LEVEL_2_BUCKET_END,t2.LEVEL_2_PROG
+		,
+		NULL AS MDM_STATUS, NULL AS MDM_MSG
+		from
+			(
+				select 
+				NULL AS [LEAF_LEVEL_ID]
+				,RETAIL_YEAR+' OP'+RETAIL_MONTH AS LEAF_LEVEL
+				,'-' AS [LEAF_LEVEL_DESCRIPTION]
+				,min(day_date) as LEAF_LEVEL_BUCKET_START
+				,max(DAY_DATE) as LEAF_LEVEL_BUCKET_END
+				,RETAIL_MONTH_PROG AS LEAF_LEVEL_PROG
+				from GenerateTime
+				group by RETAIL_YEAR,RETAIL_MONTH,RETAIL_MONTH_PROG
+			)t0
+		inner join 
+			(
+				select t0.RETAIL_MONTH_PROG, t0.LEVEL_1_ID,t0.LEVEL_1,t0.LEVEL_1_DESCRIPTION,t1.LEVEL_1_BUCKET_START,t1.LEVEL_1_BUCKET_END,t0.LEVEL_1_PROG from 
+				(select 
+				RETAIL_MONTH_PROG,
+				NULL AS [LEVEL_1_ID]
+				,RETAIL_YEAR+' OQ'+RETAIL_QUARTER AS [LEVEL_1]
+				,'-' AS [LEVEL_1_DESCRIPTION]
+				,min(day_date) as LEVEL_1_BUCKET_START
+				,max(DAY_DATE) as LEVEL_1_BUCKET_END
+				,RETAIL_QUARTER_PROG AS LEVEL_1_PROG
+				from GenerateTime
+				group by RETAIL_YEAR,RETAIL_QUARTER,RETAIL_QUARTER_PROG,RETAIL_MONTH_PROG) t0
+				inner join (select RETAIL_QUARTER_PROG,min(day_date) as LEVEL_1_BUCKET_START,max(day_date) as LEVEL_1_BUCKET_END from GenerateTime
+				group by RETAIL_QUARTER_PROG) t1 on t1.RETAIL_QUARTER_PROG =t0.LEVEL_1_PROG
+			) t1 on t1.RETAIL_MONTH_PROG = t0.LEAF_LEVEL_PROG
+		inner join 
+			(
+				select t0.RETAIL_QUARTER_PROG, t0.LEVEL_2_ID,t0.LEVEL_2,t0.LEVEL_2_DESCRIPTION,t1.LEVEL_2_BUCKET_START,t1.LEVEL_2_BUCKET_END,t0.LEVEL_2_PROG from 
+				(select 
+				RETAIL_QUARTER_PROG,
+				NULL AS [LEVEL_2_ID]
+				,'OY'+RETAIL_YEAR AS [LEVEL_2]
+				,'-' AS [LEVEL_2_DESCRIPTION]
+				,min(day_date) as LEVEL_2_BUCKET_START
+				,max(DAY_DATE) as LEVEL_2_BUCKET_END
+				,RETAIL_YEAR_PROG AS LEVEL_2_PROG
+				from GenerateTime
+				group by RETAIL_YEAR,RETAIL_QUARTER_PROG,RETAIL_YEAR_PROG) t0
+				inner join (select RETAIL_YEAR_PROG,min(day_date) as LEVEL_2_BUCKET_START,max(day_date) as LEVEL_2_BUCKET_END from GenerateTime
+				group by RETAIL_YEAR_PROG) t1 on t1.RETAIL_YEAR_PROG =t0.LEVEL_2_PROG
+			) t2 on t2.RETAIL_QUARTER_PROG = t1.LEVEL_1_PROG
+		)t10
+		left join DW_TIME t20 on t20.D_PERIOD=t10.LEAF_LEVEL where t20.D_PERIOD is null
+		order by LEAF_LEVEL_PROG
+	
+	END
+END
